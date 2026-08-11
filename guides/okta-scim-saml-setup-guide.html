@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">
+<title>Okta SCIM + SAML Setup Guide for Iru Endpoint</title>
+<style>
+  :root {
+    --ink: #1a2332;
+    --muted: #5b6a7f;
+    --line: #dde4ec;
+    --accent: #4f5df0;
+    --accent-soft: #eef0fe;
+    --okta: #0b5fff;
+    --iru: #7a3ff2;
+    --green: #0e8a5f;
+    --green-soft: #e7f6ef;
+    --amber: #b06a00;
+    --amber-soft: #fdf3e2;
+    --bg: #f4f6fa;
+    --card: #ffffff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    font-size: 15px;
+    line-height: 1.5;
+    padding-bottom: 80px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 28px 22px; }
+
+  /* ---------- header ---------- */
+  .doc-header {
+    border-bottom: 3px solid var(--accent);
+    padding-bottom: 14px;
+    margin-bottom: 18px;
+  }
+  h1 { font-size: 26px; letter-spacing: -0.4px; }
+  .sub { color: var(--muted); font-size: 14px; margin-top: 3px; }
+  .badge {
+    display: inline-block; background: var(--green-soft); color: var(--green);
+    font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 11px;
+    letter-spacing: 0.4px; text-transform: uppercase; margin-top: 8px;
+  }
+
+  .concept {
+    background: var(--accent-soft); border-left: 4px solid var(--accent);
+    border-radius: 0 8px 8px 0; padding: 12px 16px; margin-bottom: 20px; font-size: 14px;
+  }
+  .concept b { color: var(--accent); }
+
+  /* ---------- security details ---------- */
+  details.security {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    margin-bottom: 22px; box-shadow: 0 1px 4px rgba(26,35,50,0.06);
+  }
+  details.security summary {
+    cursor: pointer; padding: 13px 18px; font-weight: 700; font-size: 15px;
+    color: var(--ink); list-style: none; display: flex; align-items: center; gap: 9px;
+  }
+  details.security summary::-webkit-details-marker { display: none; }
+  details.security summary::before {
+    content: "\25B8"; color: var(--accent); font-size: 13px; transition: transform 0.15s;
+  }
+  details.security[open] summary::before { transform: rotate(90deg); }
+  details.security .sec-body { padding: 0 18px 14px 18px; font-size: 13.5px; }
+  details.security .sec-item {
+    padding: 7px 0; border-bottom: 1px solid #eef2f7;
+  }
+  details.security .sec-item:last-child { border-bottom: none; }
+  details.security .sec-item b { color: var(--green); }
+
+  /* ---------- value ledger ---------- */
+  .ledger {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px; margin-bottom: 22px;
+    box-shadow: 0 1px 4px rgba(26,35,50,0.06);
+  }
+  .ledger h2 { font-size: 17px; margin-bottom: 4px; }
+  .ledger .hint { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+  .field { margin-bottom: 12px; }
+  .field label {
+    display: block; font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.5px; color: var(--muted); margin-bottom: 4px;
+  }
+  .field label .src { font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .field-row { display: flex; gap: 8px; align-items: center; }
+  input[type="text"], input[type="password"] {
+    flex: 1; font-family: 'Courier New', monospace; font-size: 13.5px;
+    padding: 9px 11px; border: 1.5px solid var(--line); border-radius: 8px;
+    color: var(--ink); background: #fbfcfe; outline: none; width: 100%;
+  }
+  input:focus { border-color: var(--accent); background: #fff; }
+  input.filled { border-color: var(--green); background: var(--green-soft); }
+  .eye-btn {
+    border: 1.5px solid var(--line); background: #fff; border-radius: 8px;
+    padding: 8px 11px; cursor: pointer; font-size: 13px; color: var(--muted);
+    white-space: nowrap;
+  }
+  .eye-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .ledger-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; }
+  @media (max-width: 640px) { .ledger-grid { grid-template-columns: 1fr; } }
+  .progress {
+    font-size: 13px; font-weight: 600; color: var(--muted);
+    margin-top: 6px; display: flex; align-items: center; gap: 10px;
+  }
+  .progress-bar {
+    flex: 1; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden;
+  }
+  .progress-fill { height: 100%; width: 0%; background: var(--green); border-radius: 3px; transition: width 0.25s; }
+
+  .token-note { font-size: 12px; color: var(--amber); margin-top: 2px; }
+
+  /* ---------- phases ---------- */
+  .phase {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px; margin-bottom: 16px;
+    box-shadow: 0 1px 4px rgba(26,35,50,0.06);
+  }
+  .phase-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .phase-num {
+    width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #fff;
+    font-weight: 700; font-size: 15px; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .phase-title { font-size: 18px; font-weight: 700; }
+  .console-tag {
+    font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+    padding: 3px 10px; border-radius: 10px;
+  }
+  .tag-iru { background: #f1eafd; color: var(--iru); }
+  .tag-okta { background: #e4eeff; color: var(--okta); }
+
+  .step {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 7px 0; border-bottom: 1px solid #eef2f7; font-size: 14.5px;
+  }
+  .step:last-child { border-bottom: none; }
+  .step input[type="checkbox"] {
+    width: 17px; height: 17px; margin-top: 2px; flex-shrink: 0; accent-color: var(--green);
+    cursor: pointer;
+  }
+  .step.done .step-text { color: var(--muted); }
+  .path { color: var(--muted); font-size: 13px; }
+  code {
+    font-family: 'Courier New', monospace; font-size: 12.5px;
+    background: var(--bg); border: 1px solid var(--line);
+    padding: 1px 5px; border-radius: 4px;
+  }
+
+  /* ---------- mirrored values ---------- */
+  .mirror {
+    display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+    vertical-align: baseline;
+  }
+  .mirror-val {
+    font-family: 'Courier New', monospace; font-size: 12.5px; font-weight: 700;
+    background: var(--green-soft); border: 1px solid #bfe6d4; color: var(--green);
+    padding: 2px 8px; border-radius: 5px;
+    max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    display: inline-block; vertical-align: bottom;
+  }
+  .mirror-val.empty {
+    background: var(--amber-soft); border-color: #ecd9b3; color: var(--amber);
+    font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 600; font-style: italic;
+  }
+  .copy-btn {
+    border: 1px solid var(--line); background: #fff; color: var(--muted);
+    font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 5px;
+    cursor: pointer; letter-spacing: 0.3px;
+  }
+  .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .copy-btn.copied { border-color: var(--green); color: var(--green); background: var(--green-soft); }
+  .copy-btn:disabled { opacity: 0.4; cursor: default; }
+
+  /* ---------- tables ---------- */
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+  th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--muted); padding: 6px 10px; border-bottom: 1.5px solid var(--line);
+  }
+  td { padding: 7px 10px; font-size: 13.5px; border-bottom: 1px solid #eef2f7; vertical-align: top; }
+  td:first-child { font-weight: 600; width: 42%; }
+  tr:last-child td { border-bottom: none; }
+  .tbl-wrap { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+
+  .warn {
+    background: var(--amber-soft); border-left: 4px solid var(--amber);
+    border-radius: 0 8px 8px 0; padding: 11px 14px; margin: 10px 0; font-size: 13.5px;
+  }
+  .warn b { color: var(--amber); }
+  .ok-note {
+    background: var(--green-soft); border-left: 4px solid var(--green);
+    border-radius: 0 8px 8px 0; padding: 11px 14px; margin: 10px 0; font-size: 13.5px;
+  }
+  .ok-note b { color: var(--green); }
+
+  .section-label {
+    font-size: 17px; font-weight: 700; margin: 22px 0 8px 0;
+    padding-bottom: 5px; border-bottom: 2px solid var(--line);
+  }
+  .footer-note {
+    margin-top: 26px; font-size: 12px; color: var(--muted);
+    border-top: 1px solid var(--line); padding-top: 10px;
+  }
+
+  /* ---------- print ---------- */
+  @media print {
+    body { background: #fff; }
+    .phase, .ledger { box-shadow: none; break-inside: avoid; }
+    .copy-btn, .eye-btn { display: none; }
+    input[type="password"] { -webkit-text-security: disc; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="doc-header">
+    <h1>Setting Up Okta SCIM + SAML with Iru Endpoint</h1>
+    <div class="sub">One Okta app for user provisioning and sign in. Paste your tenant values once, and every step below fills itself in.</div>
+    <span class="badge">Confirmed via docs.iru.com &middot; July 2026</span>
+  </div>
+
+  <div class="concept">
+    <b>The one thing to know:</b> a single custom SAML 2.0 app in Okta can handle both SCIM provisioning and SAML sign in for Iru. The trap is order of operations: set up SCIM first and Okta forces placeholder URLs into the SAML fields, which break every login until replaced. This worksheet collects the real values first so placeholders are never needed. The Iru Endpoint app in the Okta Integration Network (OIN) cannot do SCIM; always build a custom app.
+  </div>
+
+  <details class="security">
+    <summary>Security and privacy details (for your security review)</summary>
+    <div class="sec-body">
+      <div class="sec-item"><b>No network activity.</b> This file enforces a Content Security Policy (<code>default-src 'none'</code>, <code>form-action 'none'</code>, <code>base-uri 'none'</code>). Your browser blocks any network request from this page, so nothing you enter can be transmitted. Verify by viewing source: there are no external scripts, styles, fonts, or fetch calls.</div>
+      <div class="sec-item"><b>No storage.</b> Values are held in JavaScript memory only. The page uses no localStorage, sessionStorage, or cookies; closing the tab destroys everything. Refreshing the page also clears all values, by design.</div>
+      <div class="sec-item"><b>Token handling.</b> The SCIM token field is masked by default and carries password manager ignore flags (1Password, LastPass, Bitwarden), so nothing prompts to save it. Copying places the full token on your clipboard; the page attempts to clear the clipboard 60 seconds after a token copy. This is best effort, since browsers require the window to be focused for clipboard writes, so also clear your clipboard history manually if your device syncs or retains it.</div>
+      <div class="sec-item"><b>Manual wipe.</b> The Clear all values button empties every field, the in-memory state, and the clipboard in one click. Use it when you finish, or before screen sharing.</div>
+      <div class="sec-item"><b>File integrity.</b> Your Iru Solutions Engineer can provide this file's SHA-256 hash so you can confirm the copy you received is unmodified.</div>
+    </div>
+  </details>
+
+
+  <!-- ================= VALUE LEDGER ================= -->
+  <div class="ledger">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;"><h2>Your values</h2><button class="eye-btn" id="clear-all" type="button">Clear all values</button></div>
+    <div class="hint">Fill these as you collect them in Phases 1 and 4. Everything below updates live. This page does not store or transmit anything you enter; values are held in memory and cleared when the tab closes.</div>
+    <div class="ledger-grid">
+      <div class="field">
+        <label>Value 1 &middot; SCIM Bearer token <span class="src">(from Iru, shown once)</span></label>
+        <div class="field-row">
+          <input type="password" id="in-token" placeholder="paste token" autocomplete="new-password" data-1p-ignore data-lpignore="true" data-bwignore="true">
+          <button class="eye-btn" id="toggle-token" type="button">Show</button>
+        </div>
+        <div class="token-note">Kept masked. Copying places the full token on your clipboard; this page attempts to clear the clipboard 60 seconds after a token copy (best effort, since browsers require the window to be focused). Still clear your clipboard history manually if your device syncs or retains it, and avoid revealing the token while screen sharing. Do not save or share this file with the token visible.</div>
+      </div>
+      <div class="field">
+        <label>Value 2 &middot; SCIM API URL <span class="src">(from Iru)</span></label>
+        <div class="field-row"><input type="text" id="in-scimurl" placeholder="https://subdomain.api.iru.com/api/v1/scim" autocomplete="off"></div>
+      </div>
+      <div class="field">
+        <label>Value 3 &middot; Service provider Entity ID <span class="src">(from Iru)</span></label>
+        <div class="field-row"><input type="text" id="in-spentity" placeholder="paste SP Entity ID" autocomplete="off"></div>
+      </div>
+      <div class="field">
+        <label>Value 4 &middot; ACS URL <span class="src">(from Iru)</span></label>
+        <div class="field-row"><input type="text" id="in-acs" placeholder="paste ACS URL" autocomplete="off"></div>
+      </div>
+      <div class="field">
+        <label>Value 5 &middot; IdP Single Sign-On URL <span class="src">(from Okta, Phase 4)</span></label>
+        <div class="field-row"><input type="text" id="in-oktasso" placeholder="collected in Phase 4" autocomplete="off"></div>
+      </div>
+      <div class="field">
+        <label>Value 6 &middot; IdP Issuer <span class="src">(from Okta, Phase 4)</span></label>
+        <div class="field-row"><input type="text" id="in-issuer" placeholder="collected in Phase 4" autocomplete="off"></div>
+      </div>
+    </div>
+    <div class="progress">
+      <span id="progress-label">0 of 6 values collected</span>
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+    </div>
+  </div>
+
+  <!-- ================= PHASE 1 ================= -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num">1</div>
+      <div class="phase-title">Create both integrations, collect four values</div>
+      <span class="console-tag tag-iru">Iru console</span>
+    </div>
+    <div class="step"><input type="checkbox"><div class="step-text"><b>SCIM:</b> <span class="path">Account menu &rarr; Integrations &rarr; Discover integrations &rarr; SCIM protocol &rarr; Add and configure.</span> Name it, click <b>Generate token</b>, copy the token right away (it is shown only once), and paste it into <b>Value 1</b> above.</div></div>
+    <div class="step"><input type="checkbox"><div class="step-text">After setup: ellipsis &rarr; <b>View Details</b> &rarr; copy the <b>SCIM API URL</b> into <b>Value 2</b> above. Either the <code>api.iru.com</code> or <code>api.kandji.io</code> form works.</div></div>
+    <div class="step"><input type="checkbox"><div class="step-text"><b>SAML:</b> <span class="path">Account menu &rarr; Access &rarr; Admin and authentication &rarr; + Authentication method.</span> Name it, select <b>SAML</b>, click Create.</div></div>
+    <div class="step"><input type="checkbox"><div class="step-text">From <b>Configuration information</b>, copy the <b>Service provider entity ID</b> into <b>Value 3</b> and the <b>ACS URL</b> into <b>Value 4</b>. Leave this Iru modal open; you return to it in Phase 4.</div></div>
+  </div>
+
+  <!-- ================= PHASE 2 ================= -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num">2</div>
+      <div class="phase-title">Create the app with real SAML values</div>
+      <span class="console-tag tag-okta">Okta admin</span>
+    </div>
+    <div class="step"><input type="checkbox"><div class="step-text"><span class="path">Applications &rarr; Create App Integration &rarr;</span> <b>SAML 2.0</b>. Name the app and continue to SAML Settings.</div></div>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>Okta field</th><th>Enter this</th></tr>
+        <tr><td>Single sign-on URL</td><td><span class="mirror" data-key="acs"></span></td></tr>
+        <tr><td>Audience URI (SP Entity ID)</td><td><span class="mirror" data-key="spentity"></span></td></tr>
+        <tr><td>Name ID format</td><td>Unspecified</td></tr>
+        <tr><td>Application username format</td><td>Email</td></tr>
+        <tr><td>Update application username on</td><td>Create and update</td></tr>
+      </table>
+    </div>
+    <div class="step"><input type="checkbox"><div class="step-text">Finish with <b>This is an internal app that we have created</b>.</div></div>
+  </div>
+
+  <!-- ================= PHASE 3 ================= -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num">3</div>
+      <div class="phase-title">Add SCIM to the same app</div>
+      <span class="console-tag tag-okta">Okta admin</span>
+    </div>
+    <div class="step"><input type="checkbox"><div class="step-text"><span class="path">General tab &rarr; Settings &rarr; Edit:</span> set Provisioning to <b>SCIM</b>, save.</div></div>
+    <div class="step"><input type="checkbox"><div class="step-text"><span class="path">Provisioning tab &rarr; Integration &rarr; Edit:</span> enter the settings below, then click <b>Test Connector Configuration</b>. Expect checkmarks on exactly three items: Create Users, Update User Attributes, Push Groups.</div></div>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>SCIM Connection field</th><th>Enter this</th></tr>
+        <tr><td>SCIM connector base URL</td><td><span class="mirror" data-key="scimurl"></span></td></tr>
+        <tr><td>Unique identifier field for users</td><td><code>userName</code></td></tr>
+        <tr><td>Supported provisioning actions</td><td>Push New Users, Push Profile Updates, Push Groups</td></tr>
+        <tr><td>Authentication Mode</td><td>HTTP Header</td></tr>
+        <tr><td>Authorization (Bearer token)</td><td><span class="mirror" data-key="token" data-masked="true"></span></td></tr>
+      </table>
+    </div>
+    <div class="warn">
+      <b>Most missed step:</b> still on the Provisioning tab, open <b>To App &rarr; Edit</b> and check <b>Enable</b> on Create Users, Update User Attributes, and Deactivate Users. The connector test passing does not turn these on; until they are enabled, assigning users pushes nothing to Iru. Leave Sync Password off.
+    </div>
+    <div class="step"><input type="checkbox"><div class="step-text"><span class="path">Provisioning tab &rarr; To App &rarr; Edit:</span> enable <b>Create Users</b>, <b>Update User Attributes</b>, <b>Deactivate Users</b>. Save.</div></div>
+  </div>
+
+  <!-- ================= PHASE 4 ================= -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num">4</div>
+      <div class="phase-title">Complete the SAML handshake</div>
+      <span class="console-tag tag-okta">Okta</span><span class="console-tag tag-iru">then Iru</span>
+    </div>
+    <div class="step"><input type="checkbox"><div class="step-text">In Okta: <span class="path">Sign On tab &rarr; View SAML setup instructions.</span> Copy the <b>IdP Single Sign-On URL</b> into <b>Value 5</b> and the <b>Issuer</b> into <b>Value 6</b> above, and download the <b>certificate</b>.</div></div>
+    <div class="step"><input type="checkbox"><div class="step-text">Back in the open Iru modal, enter the settings below and <b>Save</b>.</div></div>
+    <div class="tbl-wrap">
+      <table>
+        <tr><th>Iru SAML field</th><th>Enter this</th></tr>
+        <tr><td>IdP attribute</td><td>Subject</td></tr>
+        <tr><td>Attribute name</td><td>(leave blank)</td></tr>
+        <tr><td>User attribute</td><td>User Principal Name (UPN)</td></tr>
+        <tr><td>Sign In URL</td><td><span class="mirror" data-key="oktasso"></span></td></tr>
+        <tr><td>IdP Entity ID</td><td><span class="mirror" data-key="issuer"></span></td></tr>
+        <tr><td>Certificate</td><td>Upload the Okta certificate you downloaded</td></tr>
+        <tr><td>Protocol Binding</td><td>HTTP-POST</td></tr>
+        <tr><td>Request Algorithm / Digest</td><td>RSA-SHA256 / SHA256</td></tr>
+        <tr><td>Sign Request</td><td>Enabled</td></tr>
+        <tr><td>Response Signature Verification</td><td>Assertion</td></tr>
+        <tr><td>Destination</td><td>(leave blank)</td></tr>
+        <tr><td>Allowed Signature / Digest</td><td>RSA-SHA256 / SHA256</td></tr>
+      </table>
+    </div>
+    <div class="step"><input type="checkbox"><div class="step-text">Select this connection under <b>Require Authentication</b> in the <b>Automated Device Enrollment</b> Library Item so device enrollment uses your new Okta sign in. For manual enrollments: <span class="path">Enrollment &rarr; Manual Enrollment &rarr; expand the Blueprint &rarr; Require Authentication.</span></div></div>
+  </div>
+
+  <!-- ================= PHASE 5 ================= -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num">5</div>
+      <div class="phase-title">Assign users and groups</div>
+      <span class="console-tag tag-okta">Okta admin</span>
+    </div>
+    <div class="warn">
+      <b>Okta rule:</b> the same group cannot sit on both <b>Assignments</b> and <b>Push Groups</b>. Assignments wins and the group may never push. Pattern that works: one assignment group (for example <code>iru_endpoint_users</code>) on Assignments, real org groups on Push Groups, and every pushed group member also in the assignment group.
+    </div>
+    <div class="step"><input type="checkbox"><div class="step-text"><span class="path">Assignments tab &rarr; Assign &rarr; Assign to Groups:</span> assign the assignment group.</div></div>
+    <div class="step"><input type="checkbox"><div class="step-text"><span class="path">Push Groups tab &rarr; Push Groups &rarr; Find groups by name:</span> add each org group, select <b>Create Group</b>. These become available for Blueprint conditional logic in Iru.</div></div>
+    <div class="step"><input type="checkbox"><div class="step-text">Anyone enrolling a device <b>must be assigned to this app</b>. Unassigned users get an error at the Okta login prompt.</div></div>
+  </div>
+
+  <!-- ================= PHASE 6 ================= -->
+  <div class="phase">
+    <div class="phase-head">
+      <div class="phase-num">6</div>
+      <div class="phase-title">Verify</div>
+    </div>
+    <div class="step"><input type="checkbox"><div class="step-text"><b>SCIM:</b> assigned users appear under Users in Iru within minutes. Sync is one way and automatic (no Sync Now button); use <b>Push Now</b> on Push Groups to force a group update.</div></div>
+    <div class="step"><input type="checkbox"><div class="step-text"><b>Enrollment:</b> enroll a device with Require Authentication on this connection; confirm Okta login completes and the device lands in the right Blueprint.</div></div>
+  </div>
+
+  <!-- ================= TROUBLESHOOTING ================= -->
+  <div class="section-label">If enrollment login fails, check in this order</div>
+  <div class="tbl-wrap">
+    <table>
+      <tr><th>Check</th><th>Where</th></tr>
+      <tr><td>1. Okta app still has placeholder SAML URLs</td><td>Okta app &rarr; General &rarr; SAML Settings. Single sign-on URL must equal <span class="mirror" data-key="acs" data-short="your ACS URL"></span>; Audience URI must equal <span class="mirror" data-key="spentity" data-short="your SP Entity ID"></span>.</td></tr>
+      <tr><td>2. Enrolling user not assigned to the app</td><td>Okta app &rarr; Assignments tab. The most common cause when the SAML config is correct.</td></tr>
+      <tr><td>3. Iru connection has wrong Okta values</td><td>Iru &rarr; Access &rarr; Authentication methods. Verify Sign In URL, IdP Entity ID (Issuer), and certificate.</td></tr>
+      <tr><td>4. Wrong username or Name ID settings</td><td>Okta app &rarr; SAML Settings. Name ID format Unspecified, Application username format Email.</td></tr>
+      <tr><td>5. Wrong connection selected for enrollment</td><td>Automated Device Enrollment Library Item &rarr; Require Authentication. For manual enrollments: Enrollment &rarr; Manual Enrollment &rarr; expand the Blueprint &rarr; Require Authentication.</td></tr>
+      <tr><td>6. Still stuck</td><td>Read the error source: an Okta-branded error means Okta is rejecting (assignment or app config); an Iru error means the assertion failed validation. Check Okta System Log for the failed sign in.</td></tr>
+    </table>
+  </div>
+
+  <div class="ok-note" style="margin-top: 14px;">
+    <b>Prerequisite:</b> SCIM provisioning requires Okta's Advanced Lifecycle Management plan. If the Provisioning options are missing entirely in your Okta admin console, confirm your Okta plan includes it before troubleshooting anything else.
+  </div>
+
+  <div class="footer-note">
+    Prepared by Iru Solutions Engineering &middot; Steps confirmed against docs.iru.com: SCIM Directory Integration with Okta and Single Sign-On with Okta (SAML) &middot; This page runs entirely in your browser. It makes no network requests, and values you enter are held in memory only and cleared when the tab closes. A Content Security Policy in this file blocks all network activity, enforced by your browser; security reviewers can verify by viewing source. Questions? Reach out to your Iru Solutions Engineer.
+  </div>
+</div>
+
+<script>
+(function () {
+  // key -> input id
+  var fields = {
+    token:   'in-token',
+    scimurl: 'in-scimurl',
+    spentity:'in-spentity',
+    acs:     'in-acs',
+    oktasso: 'in-oktasso',
+    issuer:  'in-issuer'
+  };
+  var placeholders = {
+    token:   'paste your SCIM token in Value 1 above',
+    scimurl: 'paste your SCIM API URL in Value 2 above',
+    spentity:'paste your SP Entity ID in Value 3 above',
+    acs:     'paste your ACS URL in Value 4 above',
+    oktasso: 'collect from Okta in Phase 4, Value 5',
+    issuer:  'collect from Okta in Phase 4, Value 6'
+  };
+  var state = { token:'', scimurl:'', spentity:'', acs:'', oktasso:'', issuer:'' };
+
+  // Build mirror spans: value pill + copy button
+  var mirrors = document.querySelectorAll('.mirror');
+  mirrors.forEach(function (m) {
+    var key = m.getAttribute('data-key');
+    var val = document.createElement('span');
+    val.className = 'mirror-val empty';
+    val.textContent = placeholders[key];
+    var btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.type = 'button';
+    btn.textContent = 'Copy';
+    btn.disabled = true;
+    btn.addEventListener('click', function () {
+      var text = state[key];
+      if (!text) return;
+      function flash() {
+        btn.textContent = 'Copied';
+        btn.classList.add('copied');
+        setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1400);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(flash, function () { fallbackCopy(text); flash(); });
+      } else {
+        fallbackCopy(text); flash();
+      }
+      if (key === 'token') scheduleTokenClipClear();
+    });
+    m.appendChild(val);
+    m.appendChild(btn);
+  });
+
+  var tokenCopiedAt = 0;
+  function scheduleTokenClipClear() {
+    tokenCopiedAt = Date.now();
+    setTimeout(attemptTokenClipClear, 60000);
+  }
+  function attemptTokenClipClear() {
+    if (!tokenCopiedAt) return;
+    if (Date.now() - tokenCopiedAt < 59000) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(' ').then(function () { tokenCopiedAt = 0; }, function () {});
+      }
+    } catch (e) {}
+  }
+  window.addEventListener('focus', attemptTokenClipClear);
+
+  document.getElementById('clear-all').addEventListener('click', function () {
+    Object.keys(fields).forEach(function (key) {
+      var el = document.getElementById(fields[key]);
+      el.value = '';
+      el.classList.remove('filled');
+      state[key] = '';
+    });
+    try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(' '); } catch (e) {}
+    render();
+  });
+
+  function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+
+  function maskToken(t) {
+    if (t.length <= 8) return '\u2022'.repeat(Math.max(t.length, 4));
+    return t.slice(0, 4) + '\u2022\u2022\u2022\u2022\u2022\u2022' + t.slice(-4);
+  }
+
+  function render() {
+    mirrors.forEach(function (m) {
+      var key = m.getAttribute('data-key');
+      var valEl = m.querySelector('.mirror-val');
+      var btn = m.querySelector('.copy-btn');
+      var v = state[key];
+      if (v) {
+        var display = m.getAttribute('data-masked') === 'true' ? maskToken(v) : v;
+        valEl.textContent = display;
+        valEl.classList.remove('empty');
+        valEl.title = m.getAttribute('data-masked') === 'true' ? 'Masked. Copy places the full token on your clipboard.' : v;
+        btn.disabled = false;
+      } else {
+        valEl.textContent = placeholders[key];
+        valEl.classList.add('empty');
+        valEl.title = '';
+        btn.disabled = true;
+      }
+    });
+    // progress
+    var filled = Object.keys(state).filter(function (k) { return state[k]; }).length;
+    document.getElementById('progress-label').textContent = filled + ' of 6 values collected';
+    document.getElementById('progress-fill').style.width = (filled / 6 * 100) + '%';
+  }
+
+  Object.keys(fields).forEach(function (key) {
+    var el = document.getElementById(fields[key]);
+    el.addEventListener('input', function () {
+      state[key] = el.value.trim();
+      el.classList.toggle('filled', !!state[key]);
+      render();
+    });
+  });
+
+  // token show/hide
+  var tokenInput = document.getElementById('in-token');
+  var toggleBtn = document.getElementById('toggle-token');
+  toggleBtn.addEventListener('click', function () {
+    var isPw = tokenInput.type === 'password';
+    tokenInput.type = isPw ? 'text' : 'password';
+    toggleBtn.textContent = isPw ? 'Hide' : 'Show';
+  });
+
+  // step checkboxes: strike styling
+  document.querySelectorAll('.step input[type="checkbox"]').forEach(function (cb) {
+    cb.addEventListener('change', function () {
+      cb.closest('.step').classList.toggle('done', cb.checked);
+    });
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
