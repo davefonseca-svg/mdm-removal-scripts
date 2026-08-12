@@ -1,0 +1,83 @@
+# macOS filesystem artifacts
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows filesystem artifacts
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*.lnk
+$RECYCLE.BIN/
+
+# Editors
+.idea/
+.vscode/
+*.code-workspace
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+*~
+.nvim.lua
+
+# Log files — MUST NOT be committed; may contain device or operator data
+*.log
+logs/
+test_output/
+output/
+
+# Script temporary and debug files
+*.tmp
+*.bak
+*.orig
+*.diff
+
+# Credential and secret files — hard block
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.cer
+*.crt
+secrets.*
+credentials.*
+token.*
+password.*
+
+# macOS developer artifacts
+xcuserdata/
+*.xcworkspace/
+DerivedData/
+
+# Python tooling (if used for tests or lint runners)
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+venv/
+.venv/
+
+# Node (if used for tooling)
+node_modules/
+npm-debug.log*
+
+# Shell history (should never land in the repo)
+.bash_history
+.zsh_history
+.history
+.zhistory
+
+# Generated PDF artifacts — PDFs are included intentionally per project convention;
+# this entry blocks accidental re-exports from PDF tools that write to the working dir
+*.pdf.bak
+
+# OS-level temporary directories created by scripts or test runs
+tmp/
+temp/
