@@ -40,7 +40,10 @@
 ################################################################################################
 
 # Script version
-VERSION="2.0.3"
+VERSION="2.0.4"
+# 2.0.4 - Added dangling Chef CLI symlink cleanup in /usr/local/bin (section 2g-1);
+#         matches by link target (/opt/chef-workstation, /opt/inspec), dry-run aware,
+#         deletion verified. No other behavior changed.
 # 2.0.3 - Phase 1d no longer self-matches this script (field live run 2026-07-14 warned
 #         "processes RUNNING" with none present); 2c kill sweep uses PID snapshot + ps
 #         re-verification; the menu-bar closing line now prints only when a process was
@@ -305,6 +308,27 @@ for chef_plist in /Library/LaunchDaemons/com.getchef.*.plist(N) /Library/LaunchD
 done
 remove_path_safe "/opt/chef-workstation"
 remove_path_safe "/opt/inspec"
+
+# 2g-1. Chef CLI symlinks in /usr/local/bin (Chef Workstation drops chef/knife/
+#     inspec shortcuts here that point back into /opt/chef-workstation or /opt/inspec).
+#     The folders above are removed, but these shortcuts are otherwise left dangling.
+#     Matched by where the link POINTS, not by name - so a dry run and a live run
+#     report the same items (in dry run the folders still exist; we match either way).
+for cli_link in /usr/local/bin/*(N@); do
+  link_target="$(/usr/bin/readlink "$cli_link" 2>/dev/null)"
+  if [[ "$link_target" == */opt/chef-workstation/* || "$link_target" == */opt/inspec/* ]]; then
+    log_find "Chef symlink: ${cli_link} -> ${link_target}"
+    if [[ "$DRY_RUN" == "false" ]]; then
+      /bin/rm -f "$cli_link"
+      if [[ -L "$cli_link" ]]; then
+        log_fail "Chef symlink still present: ${cli_link}"
+      else
+        log_done "Chef symlink: ${cli_link}"
+      fi
+    fi
+  fi
+done
+
 for receipt in $(/usr/sbin/pkgutil --pkgs 2>/dev/null | /usr/bin/grep -iE "com\.(get)?chef\."); do
   log_find "Chef receipt: ${receipt}"
   if [[ "$DRY_RUN" == "false" ]]; then
