@@ -1,108 +1,89 @@
 ################################################################################################
-# Rippling Removal for Windows  |  Iru, Inc.  |  v1.3
+# Rippling Removal for Windows  |  Iru, Inc.  |  v1.4.1
 ################################################################################################
 #
-#   Windows equivalent of Iru's macOS "rippling_removal.sh". Deploy FROM IRU as a
-#   custom script AFTER a device has migrated. Runs elevated (SYSTEM/Administrator).
-#
-#   v1.3 - corrected from the first field dry run (2026-07-13), which verified the
-#   Windows agent's real footprint:
-#     service "rippling-daemon" [Rippling agent service]
-#     tasks   "\Rippling-Rescuer" (watchdog), "\rippling-start-agent-Rippling Tray",
-#             "\rippling-update-daemon"
-#     account "RipplingAdmin" (yes, it exists on Windows - profile at C:\Users\ripplingadmin)
-#     Iru's own Windows agent service: "UEMAgent"
+#   Removes leftover Rippling components from Windows devices after they migrate to Iru.
+#   Deploy from Iru as a Custom Script. Runs elevated (SYSTEM).
 #
 ################################################################################################
 # HOW TO RUN THIS SCRIPT
 ################################################################################################
 #
-#   This script has exactly TWO modes, controlled by ONE variable ($DryRun, in the
-#   "Editable defaults" section right below this header):
+#   TWO modes, ONE setting ($DryRun, under "Editable defaults" below):
 #
-#     $DryRun = $true   (DEFAULT)  ->  DRY RUN. Scans and REPORTS only. Changes NOTHING.
-#     $DryRun = $false             ->  LIVE.    Same scan, but actually removes findings.
+#     $DryRun = $true   (DEFAULT)  ->  DRY RUN. Scans and reports only. Changes nothing.
+#     $DryRun = $false             ->  LIVE.    Same scan, then removes what it finds.
 #
-#   RECOMMENDED WORKFLOW (first time on any fleet):
+#   RECOMMENDED WORKFLOW:
 #
-#     STEP 1  Push this script AS-IS from the Iru console to ONE test device.
-#             (It ships in dry-run mode - safe to run anywhere, changes nothing.)
+#     STEP 1  Push this script as-is from the Iru console to ONE test device.
+#             It ships in dry-run mode, so it changes nothing.
 #
-#     STEP 2  Read the script output in the Iru console, bottom-up. The final
-#             SUMMARY block gives a one-line RESULT verdict:
-#               "CLEAN"            -> migration already removed everything; done.
-#                                     (If a restart is pending, just restart.)
-#               "DRY RUN complete" -> review the FOUND lines above the summary.
-#                                     Those are what a live run would remove.
+#     STEP 2  Read the SUMMARY block at the bottom of the output in the Iru console:
+#               "CLEAN"            -> nothing left to remove. If a restart is pending,
+#                                     restart.
+#               "DRY RUN complete" -> the FOUND lines are what a live run would remove.
 #
-#     STEP 3  If the assessment says the Rippling app is NOT installed and only a
-#             restart is pending: restart and re-push the dry run FIRST - queued
-#             deletions often clear on their own. (If the app IS still installed,
-#             a restart will NOT help; proceed to Step 4.)
+#     STEP 3  If the Rippling app is NOT installed and a restart is pending, restart and
+#             run the dry run again first - queued deletions often clear on their own.
+#             If the app IS still installed, a restart will not help; go to Step 4.
 #
-#     STEP 4  Decide the two flags below ($RemoveRipplingAdmin especially - read
-#             its warning), set $DryRun = $false, and push again.
+#     STEP 4  Decide on the two optional settings below, set $DryRun = $false, and
+#             push again.
 #
-#     STEP 5  Confirm the summary says "CLEANED", then roll out to remaining
-#             devices (live mode is safe to re-run; the script is idempotent).
+#     STEP 5  Confirm the summary says "CLEANED", then roll out to your remaining
+#             devices. Safe to re-run in either mode.
 #
-#   OPTIONAL TOGGLES (work the same in either mode):
-#     $RemoveRipplingAdmin -> default $false. DELETES A LOCAL ADMIN ACCOUNT. Read
-#                             the warning at its definition before enabling.
-#     $RemoveChocolatey    -> default $false. Rippling used Chocolatey for app
-#                             installs; leave $false unless you have confirmed
-#                             nothing else depends on it.
+#   OPTIONAL SETTINGS (both off by default):
+#     $RemoveRipplingAdmin -> removes the Rippling local admin account, only if its
+#                             safety checks pass (see section 2i).
+#     $RemoveChocolatey    -> removes Chocolatey, which Rippling used to install apps.
+#                             Leave off unless nothing else depends on it.
 #
 ################################################################################################
 #
-#   LOGGING: every line goes to stdout (captured by the Iru console script results) AND
-#   to a timestamped file at C:\ProgramData\Iru\MDMMigration\Logs\ for deep detail.
-#   Read the console output bottom-up: the last block is the verdict.
+#   LOGGING: output goes to the Iru console and to a timestamped log file in
+#   C:\ProgramData\Iru\MDMMigration\Logs\. Read the output from the bottom up.
 #
-#   EXIT CODES (visible in Iru):
-#     0 = clean, or dry run completed  |  1 = leftovers could not be removed (see log)
+#   EXIT CODES (shown in Iru):
+#     0 = clean, dry run complete, or cleaned  |  1 = something could not be removed
 #
-#   REMOVAL ORDER (deliberate): scheduled tasks FIRST - "Rippling-Rescuer" appears to
-#   be a watchdog/repair task, so it must die before we touch the service or processes,
-#   or it may restore them mid-cleanup. Then service -> processes -> uninstaller -> files.
+#   REMOVAL ORDER: scheduled tasks first - Rippling's repair task could otherwise restore
+#   the service or processes mid-cleanup. Then service -> processes -> uninstaller -> files.
 #
 #   NOT touched, on purpose:
-#     - HKLM\SOFTWARE\Microsoft\Enrollments (Iru's own MDM enrollment lives there;
-#       read-only inspection only)
-#     - SentinelOne (if delivered via Rippling, removing an EDR is a separate decision)
+#     - MDM enrollments (HKLM\SOFTWARE\Microsoft\Enrollments). Iru's own enrollment is
+#       stored here too, so the script only reads it.
+#     - SentinelOne, even if Rippling delivered it. Removing a security agent is a
+#       separate decision.
 #
 ################################################################################################
 
-# Script version
-# VERSION="1.3.1"
-# 1.3.1 - Autostart Run-key and Uninstall registry-key removals now verify deletion and
-#         report FAILED when the entry survives (were unconditional REMOVED, which could
-#         yield a false CLEANED); Chocolatey folder no longer double-counted in FOUND
-#         (Remove-PathSafe owns the find/verify; dry-run and live counts now match).
+# Script version (used in the log banner below)
+$Version = "1.4.1"
 
 # ---------------------------------------------------------------------------------
 # Editable defaults
 # ---------------------------------------------------------------------------------
-$DryRun              = $true    # THE mode switch - see "HOW TO RUN THIS SCRIPT" above.
-                                # $true = report only (safe anywhere). $false = actually remove.
+$DryRun              = $true    # The mode setting - see "HOW TO RUN THIS SCRIPT" above.
+                                # $true = report only. $false = remove.
 
-$RemoveRipplingAdmin = $false   # !! WARNING !! The Windows agent DOES create a local admin
-                                # account "RipplingAdmin" (field-verified). On some fleets it
-                                # is the ONLY local admin - deleting it could leave no local
-                                # admin on the device (Iru LAPS is not yet available). Before
-                                # setting $true, confirm that another local
-                                # admin account exists on these devices.
+$RemoveRipplingAdmin = $false   # $true = remove the RipplingAdmin local account and its
+                                # profile, only if its safety checks pass (see section 2i).
+                                # The script blocks removal if no other enabled local admin
+                                # exists. Run a dry run with this on to see the result first.
 
-$RemoveChocolatey    = $false   # Rippling's Windows app-management layer (its munki).
-                                # Devs may use choco personally; removal orphans choco apps.
+$RemoveChocolatey    = $false   # $true = remove Chocolatey, which Rippling used to install
+                                # apps. Others may rely on it; apps it installed are no longer
+                                # managed by it, and portable tools in its folder are removed.
 
-$UserToRemove        = "RipplingAdmin"  # Field-verified name. Change only if your Rippling
-                                        # tenant used a different account name.
+$UserToRemove        = "RipplingAdmin"  # Change only if your Rippling setup used a
+                                        # different account name.
 
 $ErrorActionPreference = "Continue"
 
 # ---------------------------------------------------------------------------------
-# Logging - stdout (Iru console) + file. Counters feed the final SUMMARY.
+# Logging - output goes to the Iru console and the log file. Counts feed the SUMMARY.
 # ---------------------------------------------------------------------------------
 $LogDir  = "C:\ProgramData\Iru\MDMMigration\Logs"
 $LogFile = Join-Path $LogDir ("rippling_removal_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
@@ -135,7 +116,7 @@ function Remove-PathSafe {
 }
 
 Log-Info "================================================================"
-Log-Info "Rippling removal v1.3.1 | DryRun=$DryRun | Host=$env:COMPUTERNAME"
+Log-Info "Rippling removal v$Version | DryRun=$DryRun | Host=$env:COMPUTERNAME"
 Log-Info "Full log: $LogFile"
 Log-Info "================================================================"
 
@@ -144,11 +125,9 @@ Log-Info "================================================================"
 ################################################################################################
 Log-Info "--- PHASE 1: migration state assessment ---"
 
-# 1a. Is the Iru agent on this device? Primary check: the field-verified service name
-#     "UEMAgent". Fallback: word-bounded iru/kandji match ("kandji" kept on purpose -
-#     post-rebrand infrastructure still uses legacy Kandji identifiers, e.g. device
-#     domains *.web-api.kandji.io. Word boundaries prevent the v1.2 false positive
-#     where "AntivIRUs" matched "iru" and reported Defender as the Iru agent.)
+# 1a. Is the Iru agent installed? Checks for the Iru agent service ("UEMAgent"), or any
+#     service named "iru" or "kandji" as a whole word. Some Iru components still use the
+#     Kandji name, which is expected.
 $iruSvc = Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | Where-Object {
     $_.Name -eq "UEMAgent" -or
     $_.Name -match "(?i)\b(iru|kandji)\b" -or
@@ -160,7 +139,7 @@ if ($iruSvc) {
     Log-Warn "Iru agent: NOT DETECTED via services. If this script isn't running FROM Iru, verify enrollment before cleaning up."
 }
 
-# 1b. Any Rippling MDM enrollment remnants? (READ-ONLY - never modified here)
+# 1b. Any Rippling MDM enrollment left? (Reported only - never modified.)
 $ripplingEnrollment = $false
 $enrollRoot = "HKLM:\SOFTWARE\Microsoft\Enrollments"
 if (Test-Path $enrollRoot) {
@@ -175,12 +154,12 @@ if (Test-Path $enrollRoot) {
 }
 if (-not $ripplingEnrollment) { Log-Info "Rippling MDM enrollment: NONE (migration script did its job)" }
 
-# 1c. Rippling app still installed?
+# 1c. Is the Rippling app still installed?
 $appPresent = Test-Path "C:\Program Files\Rippling\App\Rippling.exe"
 if ($appPresent) { Log-Warn "Rippling app: STILL INSTALLED - the migration's uninstall step did not run or failed. A restart will NOT fix this; a live run of this script (or the official uninstaller) is required." }
 else             { Log-Info "Rippling app: not installed (migration script's uninstall ran)" }
 
-# 1d. Pending reboot? (uninstalls queue locked files for deletion at next restart)
+# 1d. Is a restart pending? (Uninstalls often queue locked files for deletion at the next restart.)
 $pendingReboot = $false
 $rebootSignals = @()
 if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") {
@@ -200,14 +179,15 @@ if ($pendingReboot) { Log-Warn ("Restart pending: YES ({0})" -f ($rebootSignals 
 else                { Log-Info "Restart pending: no" }
 
 ################################################################################################
-# PHASE 2 - LEFTOVER SWEEP (honors DryRun; every finding logged as FOUND first)
-# ORDER MATTERS in live mode: watchdog tasks -> service -> processes -> uninstaller -> files.
+# PHASE 2 - LEFTOVER SWEEP (follows $DryRun; every finding is logged as FOUND first)
+# ORDER: repair task first -> service -> processes -> uninstaller -> files, so nothing
+# can restore itself mid-cleanup.
 ################################################################################################
 Log-Info "--- PHASE 2: leftover sweep ---"
 
-# 2a. Scheduled tasks FIRST. Field-verified names: \Rippling-Rescuer (watchdog/repair),
-#     \rippling-start-agent-Rippling Tray, \rippling-update-daemon. The Rescuer must be
-#     removed before the service/processes are touched or it may restore them.
+# 2a. Rippling scheduled tasks, removed first. These include \Rippling-Rescuer (a repair
+#     task that could otherwise restore the service or processes),
+#     \rippling-start-agent-Rippling Tray, and \rippling-update-daemon.
 foreach ($t in (Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
     $_.TaskName -like "*rippling*" -or $_.TaskPath -like "*rippling*" })) {
     Log-Find "Scheduled task: $($t.TaskPath)$($t.TaskName)"
@@ -219,7 +199,7 @@ foreach ($t in (Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
     }
 }
 
-# 2b. Service (field-verified: "rippling-daemon" [Rippling agent service])
+# 2b. The Rippling agent service ("rippling-daemon") - stopped, then deleted.
 foreach ($svc in (Get-CimInstance Win32_Service | Where-Object {
     $_.Name -like "*rippling*" -or $_.DisplayName -like "*rippling*" })) {
     Log-Find "Service: $($svc.Name) [$($svc.DisplayName)]"
@@ -231,7 +211,7 @@ foreach ($svc in (Get-CimInstance Win32_Service | Where-Object {
     }
 }
 
-# 2c. Processes (field-observed: multiple "Rippling Tray" instances, one per session)
+# 2c. Rippling processes still running, such as the tray app (one per signed-in user).
 foreach ($p in (Get-Process | Where-Object { $_.Name -like "*rippling*" })) {
     Log-Find "Process: $($p.Name) (PID $($p.Id))"
     if (-not $DryRun) {
@@ -241,7 +221,7 @@ foreach ($p in (Get-Process | Where-Object { $_.Name -like "*rippling*" })) {
     }
 }
 
-# 2d. Official uninstaller (now that nothing can respawn or hold repair state)
+# 2d. Rippling's official uninstaller, run silently if still present.
 $uninstaller = "C:\Program Files\Rippling\App\Uninstall Rippling.exe"
 if (Test-Path -LiteralPath $uninstaller) {
     Log-Find "Official uninstaller present: $uninstaller"
@@ -254,7 +234,8 @@ if (Test-Path -LiteralPath $uninstaller) {
     }
 }
 
-# 2e. Autostart Run-key entries (field-verified: HKLM ...\Run\"Rippling Tray")
+# 2e. Rippling startup (Run) entries - for the device, and for each user whose profile
+#     is currently loaded (usually the signed-in users).
 $runKeys = @(
     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
     "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run"
@@ -279,8 +260,8 @@ foreach ($rk in $runKeys) {
     }
 }
 
-# 2f. Leftover folders (field-verified: Program Files\Rippling, ProgramData\Rippling,
-#     per-user AppData "Rippling", "rippling-updater", "rippling-tray")
+# 2f. Rippling folders - Program Files, ProgramData, and each user's AppData folders whose
+#     names contain "rippling" (e.g. "Rippling", "rippling-updater", "rippling-tray").
 foreach ($path in @("C:\Program Files\Rippling", "C:\Program Files (x86)\Rippling", "$env:ProgramData\Rippling")) {
     Remove-PathSafe -Path $path
 }
@@ -293,7 +274,7 @@ foreach ($profileDir in (Get-ChildItem "C:\Users" -Directory -ErrorAction Silent
     }
 }
 
-# 2g. Uninstall registry keys (= pkgutil --forget; scoped to Uninstall keys ONLY)
+# 2g. Rippling's entries in the installed-programs list (Uninstall registry keys only).
 foreach ($root in @(
     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
     "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall")) {
@@ -308,7 +289,7 @@ foreach ($root in @(
     }
 }
 
-# 2h. Chocolatey (Rippling's Windows app-management layer) - flag-gated
+# 2h. Chocolatey - only if $RemoveChocolatey = $true.
 $chocoDir = "$env:ProgramData\chocolatey"
 if (Test-Path $chocoDir) {
     if ($RemoveChocolatey) {
@@ -322,20 +303,111 @@ if (Test-Path $chocoDir) {
     }
 }
 
-# 2i. Local admin account (field-verified to exist on Windows) - flag-gated because
-#     it may be the only local admin on the device. See warning at $RemoveRipplingAdmin.
+# 2i. Rippling local admin account - only if $RemoveRipplingAdmin = $true.
+#     Safety checks run in both modes, so a dry run shows whether removal would be allowed.
+#     If a check can't confirm something, removal is blocked. Removal is blocked if the
+#     account is signed in, or if no other enabled LOCAL admin account exists (Entra ID and
+#     domain admins don't count toward this). The account is deleted first and confirmed
+#     gone; only then is its profile removed, so a failed delete changes nothing else.
+function Get-OtherEnabledLocalAdminCount {
+    # Returns the number of enabled LOCAL user accounts (other than $ExcludeSid) in the
+    # local Administrators group, or -1 if the group can't be read. Reads the group through
+    # ADSI, which works on Entra-joined devices, and finds it by its built-in SID
+    # (S-1-5-32-544) so it works in any Windows language.
+    param([string]$ExcludeSid)
+    try {
+        $adminSid  = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
+        $groupName = $adminSid.Translate([System.Security.Principal.NTAccount]).Value.Split('\')[-1]
+        $group     = [ADSI]"WinNT://$env:COMPUTERNAME/$groupName,group"
+        $memberSids = @()
+        foreach ($m in @($group.psbase.Invoke("Members"))) {
+            try {
+                $bytes = $m.GetType().InvokeMember("objectSid", "GetProperty", $null, $m, $null)
+                $memberSids += (New-Object System.Security.Principal.SecurityIdentifier($bytes, 0)).Value
+            } catch { }   # a member that can't be resolved is skipped, never counted
+        }
+        $count = 0
+        foreach ($u in @(Get-LocalUser -ErrorAction Stop)) {
+            if (-not $u.Enabled) { continue }
+            if ($u.SID.Value -eq $ExcludeSid) { continue }
+            if ($memberSids -contains $u.SID.Value) { $count++ }
+        }
+        return [int]$count
+    } catch {
+        return [int]-1
+    }
+}
+
+$accountBlocked  = $false
+$accountFailures = 0      # account-related FAILED lines, so the summary can explain them
 $acct = Get-LocalUser -Name $UserToRemove -ErrorAction SilentlyContinue
 if ($acct) {
     if ($RemoveRipplingAdmin) {
         Log-Find "Local account: $UserToRemove"
-        if (-not $DryRun) {
-            $sid = $acct.SID.Value
-            Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
-                Where-Object { $_.SID -eq $sid } |
-                Remove-CimInstance -ErrorAction SilentlyContinue
-            Remove-LocalUser -Name $UserToRemove -ErrorAction SilentlyContinue
-            if (Get-LocalUser -Name $UserToRemove -ErrorAction SilentlyContinue) { Log-Fail "Account: $UserToRemove" }
-            else { Log-Done "Account + profile: $UserToRemove" }
+        $sid         = $acct.SID.Value
+        $acctProfile = Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
+                           Where-Object { $_.SID -eq $sid } | Select-Object -First 1
+        $profilePath = if ($acctProfile) { $acctProfile.LocalPath } else { $null }
+        $blockReason = $null
+
+        # Check 1: the account must not be signed in.
+        if ($acctProfile -and $acctProfile.Loaded) {
+            $blockReason = "account is currently signed in (profile loaded) - sign it out first"
+        }
+
+        # Check 2: at least one other enabled local admin must exist.
+        if (-not $blockReason) {
+            $otherAdmins = Get-OtherEnabledLocalAdminCount -ExcludeSid $sid
+            if ($otherAdmins -lt 0) {
+                $blockReason = "could not read the local Administrators group - blocked to be safe"
+            } elseif ($otherAdmins -eq 0) {
+                $blockReason = "no other enabled local admin account exists on this device - create one first"
+            } else {
+                Log-Info "Account '$UserToRemove': $otherAdmins other enabled local admin(s) present - safe to remove."
+            }
+        }
+
+        if ($blockReason) {
+            $accountBlocked = $true
+            if ($DryRun) { Log-Warn "Account '$UserToRemove' would be BLOCKED in a live run: $blockReason." }
+            else         { $accountFailures++; Log-Fail "Account '$UserToRemove' NOT removed: $blockReason. Nothing was changed." }
+        }
+        elseif ($DryRun) {
+            Log-Info "Account '$UserToRemove' passed preflight - a live run would remove it and its profile ($(if ($profilePath) { $profilePath } else { 'no profile on disk' }))."
+        }
+        else {
+            # Step 1: delete the account, keeping any error message.
+            $delErr = $null
+            try { Remove-LocalUser -Name $UserToRemove -ErrorAction Stop }
+            catch { $delErr = $_.Exception.Message }
+
+            if (Get-LocalUser -Name $UserToRemove -ErrorAction SilentlyContinue) {
+                $accountFailures++
+                Log-Fail "Account: $UserToRemove ($(if ($delErr) { $delErr } else { 'still present after delete' })) - profile left untouched."
+            }
+            else {
+                # Step 2: the account is confirmed gone - now remove its profile.
+                $profErr = $null
+                $prof = Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
+                            Where-Object { $_.SID -eq $sid }
+                if ($prof) {
+                    try { $prof | Remove-CimInstance -ErrorAction Stop }
+                    catch { $profErr = $_.Exception.Message }
+                }
+                $profLeft = Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
+                                Where-Object { $_.SID -eq $sid }
+                if ($profLeft) {
+                    $accountFailures++
+                    Log-Fail "Account removed but profile still registered: $profilePath$(if ($profErr) { " ($profErr)" })"
+                }
+                elseif ($profilePath -and (Test-Path -LiteralPath $profilePath)) {
+                    $accountFailures++
+                    Log-Fail "Account removed but profile folder still on disk (locked? restart may release it): $profilePath"
+                }
+                else {
+                    Log-Done "Account + profile: $UserToRemove"
+                }
+            }
         }
     } else {
         Log-Warn "Local account '$UserToRemove' present but LEFT IN PLACE (RemoveRipplingAdmin=`$false). Confirm another local admin exists on this fleet before enabling removal."
@@ -345,7 +417,7 @@ if ($acct) {
 }
 
 ################################################################################################
-# PHASE 3 - SUMMARY (this is the block to read in the Iru console)
+# PHASE 3 - SUMMARY (read the output from the bottom up; this block is the result)
 ################################################################################################
 Log-Info "================================================================"
 Log-Info "SUMMARY"
@@ -369,7 +441,15 @@ elseif ($DryRun) {
     }
 }
 elseif ($script:Failed.Count -gt 0) {
-    Log-Warn "RESULT: PARTIAL. $($script:Failed.Count) item(s) could not be removed - likely file locks. Restart the device and re-run this script."
+    Log-Warn "RESULT: PARTIAL. $($script:Failed.Count) item(s) could not be removed - see FAILED lines."
+    if ($accountBlocked) {
+        Log-Warn "        Account NOT removed: fix the reason in its FAILED line first - a restart will not change it."
+    } elseif ($accountFailures -gt 0) {
+        Log-Warn "        Account removal did not complete: see its FAILED line for the reason. A restart may release a locked profile folder; then re-run."
+    }
+    if ($script:Failed.Count -gt $accountFailures) {
+        Log-Warn "        Other items: likely file locks - restart the device and re-run this script."
+    }
 }
 else {
     Log-Info "RESULT: CLEANED. $($script:Removed.Count) leftover(s) removed."

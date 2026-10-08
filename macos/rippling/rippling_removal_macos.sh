@@ -1,74 +1,49 @@
 #!/bin/zsh
 
 ################################################################################################
-# Rippling Removal for macOS  |  Iru, Inc.  |  v2.0
+# Rippling Removal for macOS  |  Iru, Inc.  |  v2.0.6
 ################################################################################################
 #
-#   Verbose rewrite of the 2021 rippling_removal.sh (same job, observable behavior).
-#   Deploy FROM IRU as a custom script AFTER a device has migrated. Runs as root.
-#
-#   WHY v2.0 EXISTS - gaps in the original, all observed in the field:
-#     - Never killed running processes: deleting Rippling.app leaves the already-
-#       running tray process alive, so the menu bar icon persists until logout.
-#     - Only unloaded SYSTEM LaunchDaemons; the tray is a per-user LaunchAgent,
-#       so it stayed loaded in the user's session even after its plist was deleted.
-#     - Receipts loop tested receipt IDs as file paths ([[ -e com.googlecode... ]]),
-#       which never matches - pkgutil --forget never actually ran.
-#     - remove_rippling forgot the CHEF receipt (copy-paste) instead of Rippling's.
-#     - Logged loudly about what it could NOT find, silently removed the rest.
+#   Removes leftover Rippling components from Macs after they migrate to Iru.
+#   Deploy from Iru as a Custom Script. Runs as root.
 #
 ################################################################################################
 # HOW TO RUN THIS SCRIPT
 ################################################################################################
 #
-#   TWO modes, ONE variable (in "Editable defaults" below):
+#   TWO modes, ONE setting (under "Editable defaults" below):
 #
-#     DRY_RUN="true"   (DEFAULT)  ->  DRY RUN. Scans and REPORTS only. Changes NOTHING.
-#     DRY_RUN="false"             ->  LIVE.    Same scan, actually removes findings.
+#     DRY_RUN="true"   (DEFAULT)  ->  DRY RUN. Scans and reports only. Changes nothing.
+#     DRY_RUN="false"             ->  LIVE.    Same scan, then removes what it finds.
 #
-#   WORKFLOW: push as-is to one test Mac -> read the SUMMARY block bottom-up in the
-#   Iru console -> if the FOUND lines look right, set DRY_RUN="false" and re-push ->
-#   confirm "CLEANED" -> roll out. Live mode is idempotent; safe to re-run anywhere.
+#   WORKFLOW: push as-is to one test Mac -> read the SUMMARY block at the bottom of the
+#   output in the Iru console -> if the FOUND lines look right, set DRY_RUN="false" and
+#   push again -> confirm "CLEANED" -> roll out. Safe to re-run in either mode.
 #
-#   OPTIONAL TOGGLE:
-#     REMOVE_RIPPLING_ADMIN -> default "false". DELETES A LOCAL ADMIN ACCOUNT.
-#                              Confirm another local admin exists before enabling.
+#   OPTIONAL SETTING:
+#     REMOVE_RIPPLING_ADMIN -> default "false". Removes the Rippling local admin account,
+#                              only if its safety checks pass (see section 2i). Run a dry
+#                              run with it on first to see whether removal is allowed.
 #
-#   NOT touched, on purpose: MDM enrollment profiles (migration/re-enrollment owns
-#   those; inspected read-only here).
+#   NOT touched, on purpose: MDM enrollment and configuration profiles. They are
+#   reported only; your migration process handles them.
 #
 ################################################################################################
 
 # Script version
-VERSION="2.0.4"
-# 2.0.4 - Added dangling Chef CLI symlink cleanup in /usr/local/bin (section 2g-1);
-#         matches by link target (/opt/chef-workstation, /opt/inspec), dry-run aware,
-#         deletion verified. No other behavior changed.
-# 2.0.3 - Phase 1d no longer self-matches this script (field live run 2026-07-14 warned
-#         "processes RUNNING" with none present); 2c kill sweep uses PID snapshot + ps
-#         re-verification; the menu-bar closing line now prints only when a process was
-#         actually killed this run.
-# 2.0.2 - Field dry run 2026-07-14 (v2.0.0) showed the Rippling install
-#         root at /usr/local/rippling and per-user data at ~/Library/Application Support/
-#         rippling-tray - neither was in the removal list, so a live run would have
-#         reported CLEANED with the tray app bundle still on disk. Added /usr/local/rippling
-#         to the Phase 1 check and file sweep; per-user Application Support sweep is now
-#         discovery-based (*rippling*, case-insensitive) instead of exact-name.
-# 2.0.1 - Chef launch-item removal now verifies deletion (was unconditional REMOVED);
-#         Chef launch-item glob corrected to com.getchef/com.chef (was com.googlecode.chef,
-#         a Munki copy-paste that matched nothing); login-window reset now read-back verified.
+VERSION="2.0.6"
 
 ################################################################################################
 # Editable defaults
 ################################################################################################
 
-DRY_RUN="true"                  # THE mode switch. "true" = report only. "false" = remove.
-REMOVE_RIPPLING_ADMIN="false"   # !! Deletes the RipplingAdmin local account + home dir.
-                                # Confirm another local admin exists before enabling.
-USER_TO_REMOVE="RipplingAdmin"  # Change only if your Rippling tenant used another name.
+DRY_RUN="true"                  # The mode setting. "true" = report only. "false" = remove.
+REMOVE_RIPPLING_ADMIN="false"   # "true" = remove the Rippling admin account and its home
+                                # folder, if its safety checks pass (see section 2i).
+USER_TO_REMOVE="RipplingAdmin"  # Change only if your Rippling setup used a different name.
 
 ################################################################################################
-# Logging - stdout (Iru console) + Unified Log. Counters feed the final SUMMARY.
+# Logging - output goes to the Iru console and the macOS unified log. Counts feed the SUMMARY.
 ################################################################################################
 
 typeset -a found_items
@@ -92,7 +67,7 @@ log_done()  { removed_items+=("$1"); logging "REMOVED" "$1"; }
 log_fail()  { failed_items+=("$1");  logging "FAILED" "$1"; }
 
 remove_path_safe() {
-  # $1: path to remove (FOUND first, honors DRY_RUN, verifies deletion)
+  # $1: path to remove. Logs FOUND first, follows DRY_RUN, and verifies the deletion.
   local target="$1"
   if [[ ! -e "$target" ]]; then
     return 0
@@ -123,32 +98,30 @@ log_info "================================================================"
 ################################################################################################
 log_info "--- PHASE 1: migration state assessment ---"
 
-# 1a. Iru agent present? (agent binary path is unchanged post-rebrand)
+# 1a. Is the Iru agent installed? (The agent is installed at /usr/local/bin/kandji.)
 if [[ -e "/usr/local/bin/kandji" ]]; then
   log_info "Iru agent: PRESENT (/usr/local/bin/kandji)"
 else
   log_warn "Iru agent: NOT DETECTED. If this script is not running FROM Iru, verify enrollment before cleaning up."
 fi
 
-# 1b. Rippling MDM enrollment remnants? (READ-ONLY - never modified here)
+# 1b. Any Rippling configuration profiles left? (Reported only - never modified.)
 if /usr/bin/profiles list 2>/dev/null | /usr/bin/grep -qi "rippling"; then
   log_warn "Rippling configuration profiles still present - migration/re-enrollment should have removed these. NOT touching them here."
 else
   log_info "Rippling MDM profiles: NONE (migration did its job)"
 fi
 
-# 1c. Rippling app bundles still on disk?
+# 1c. Is the Rippling app still on disk?
 if [[ -e "/Applications/Rippling.app" || -e "/Applications/RipplingMDM.app" || -e "/opt/rippling" || -e "/usr/local/rippling" ]]; then
   log_info "Rippling app/files: STILL ON DISK"
 else
   log_info "Rippling app/files: not found on disk"
 fi
 
-# 1d. Rippling processes RUNNING? (the menu bar ghost - files can be deleted while
-#     the process lives on in memory until logout; the 2021 script never killed these)
-#     PIDs are re-verified via ps so this script (whose own path contains "rippling")
-#     never counts itself - field live run 2026-07-14 showed a false RUNNING warning
-#     from exactly that self-match.
+# 1d. Are Rippling processes still running? A process can keep running (and keep its
+#     menu-bar icon) after its files are deleted. Each match is re-checked with ps so
+#     this script, whose own name contains "rippling", never counts itself.
 console_user="$(get_console_user)"
 rippling_running="false"
 for pid in ${(f)"$(/usr/bin/pgrep -if "rippling" 2>/dev/null)"}; do
@@ -166,14 +139,14 @@ else
 fi
 
 ################################################################################################
-# PHASE 2 - LEFTOVER SWEEP (honors DRY_RUN; every finding logged as FOUND first)
-# ORDER: unload agents/daemons -> kill processes -> delete files -> forget receipts.
+# PHASE 2 - LEFTOVER SWEEP (follows DRY_RUN; every finding is logged as FOUND first)
+# ORDER: unload agents/daemons -> stop processes -> delete files -> forget receipts,
+# so nothing can relaunch mid-cleanup.
 ################################################################################################
 log_info "--- PHASE 2: leftover sweep ---"
 
-# 2a. Per-user LaunchAgents - unload from the console user's session, then delete.
-#     (The tray icon lives here. The 2021 script deleted the plist but never
-#     unloaded it, leaving the agent registered in the running session.)
+# 2a. Rippling LaunchAgents - unloaded from the signed-in user's session, then deleted.
+#     The Rippling menu-bar app runs from here.
 console_uid=""
 if [[ -n "$console_user" ]]; then
   console_uid="$(/usr/bin/id -u "$console_user" 2>/dev/null)"
@@ -193,7 +166,7 @@ for agent_plist in /Library/LaunchAgents/com.rippling.*.plist(N) /Users/*/Librar
   fi
 done
 
-# 2b. System LaunchDaemons - bootout (modern launchctl), then delete
+# 2b. Rippling LaunchDaemons - unloaded from the system, then deleted.
 for daemon_plist in /Library/LaunchDaemons/com.rippling.*.plist(N); do
   log_find "LaunchDaemon: ${daemon_plist}"
   if [[ "$DRY_RUN" == "false" ]]; then
@@ -207,9 +180,8 @@ for daemon_plist in /Library/LaunchDaemons/com.rippling.*.plist(N); do
   fi
 done
 
-# 2c. Kill running Rippling processes (excluding this script and its own tooling).
-#     PIDs snapshotted first, each re-verified via ps - no pipeline stage carrying the
-#     search pattern in its argv exists concurrently with pgrep to self-match.
+# 2c. Stop any Rippling processes still running (this script is excluded).
+#     Each match is re-checked with ps before it is stopped.
 for pid in ${(f)"$(/usr/bin/pgrep -if "rippling" 2>/dev/null)"}; do
   [[ -z "$pid" || "$pid" == "$$" ]] && continue
   pcmd="$(/bin/ps -p "$pid" -o command= 2>/dev/null)"
@@ -231,7 +203,7 @@ for pid in ${(f)"$(/usr/bin/pgrep -if "rippling" 2>/dev/null)"}; do
   fi
 done
 
-# 2d. Rippling files and folders
+# 2d. Rippling files and folders.
 remove_path_safe "/opt/rippling"
 remove_path_safe "/opt/rippling-readonly"
 remove_path_safe "/usr/local/rippling"
@@ -239,9 +211,8 @@ remove_path_safe "/Applications/Rippling.app"
 remove_path_safe "/Applications/RipplingMDM.app"
 remove_path_safe "/Library/Application Support/Rippling"
 for user_home in /Users/*(N/); do
-  # Discovery-based per-user sweep: catches "Rippling", "rippling-tray", and case
-  # variants (field dry run 2026-07-14 showed ~/Library/Application Support/rippling-tray,
-  # which an exact "Rippling" match missed).
+  # Every user's Application Support folders whose names contain "rippling" (any case),
+  # e.g. "Rippling" and "rippling-tray".
   for support_dir in "${user_home}/Library/Application Support"/*(N); do
     if [[ "${support_dir:t:l}" == *rippling* ]]; then
       remove_path_safe "$support_dir"
@@ -249,8 +220,7 @@ for user_home in /Users/*(N/); do
   done
 done
 
-# 2e. Package receipts - discovery-based, and actually functional (the 2021 script
-#     tested receipt IDs as file paths, so --forget never ran)
+# 2e. Package receipts - every installer receipt whose ID contains "rippling".
 for receipt in $(/usr/sbin/pkgutil --pkgs 2>/dev/null | /usr/bin/grep -i "rippling"); do
   log_find "Package receipt: ${receipt}"
   if [[ "$DRY_RUN" == "false" ]]; then
@@ -262,8 +232,9 @@ for receipt in $(/usr/sbin/pkgutil --pkgs 2>/dev/null | /usr/bin/grep -i "rippli
   fi
 done
 
-# 2f. Munki (Rippling's app-delivery layer on macOS, when deployed) - agents,
-#     daemons, files, receipts. Discovery-based rather than a hardcoded list.
+# 2f. Munki, which Rippling used to deliver software - launch items, files, and
+#     receipts, where present. If you use Munki independently of Rippling, remove this
+#     section before running live.
 for munki_plist in /Library/LaunchDaemons/com.googlecode.munki.*.plist(N) /Library/LaunchAgents/com.googlecode.munki.*.plist(N); do
   log_find "Munki launch item: ${munki_plist}"
   if [[ "$DRY_RUN" == "false" ]]; then
@@ -293,7 +264,9 @@ for receipt in $(/usr/sbin/pkgutil --pkgs 2>/dev/null | /usr/bin/grep -i "com.go
   fi
 done
 
-# 2g. Chef (part of Rippling's legacy macOS stack, when deployed)
+# 2g. Chef, which Rippling used on some Macs - launch items, files, and receipts, where
+#     present. If you use Chef independently of Rippling, remove this section (and 2g-1)
+#     before running live.
 for chef_plist in /Library/LaunchDaemons/com.getchef.*.plist(N) /Library/LaunchDaemons/com.chef.*.plist(N); do
   log_find "Chef launch item: ${chef_plist}"
   if [[ "$DRY_RUN" == "false" ]]; then
@@ -309,11 +282,9 @@ done
 remove_path_safe "/opt/chef-workstation"
 remove_path_safe "/opt/inspec"
 
-# 2g-1. Chef CLI symlinks in /usr/local/bin (Chef Workstation drops chef/knife/
-#     inspec shortcuts here that point back into /opt/chef-workstation or /opt/inspec).
-#     The folders above are removed, but these shortcuts are otherwise left dangling.
-#     Matched by where the link POINTS, not by name - so a dry run and a live run
-#     report the same items (in dry run the folders still exist; we match either way).
+# 2g-1. Chef command shortcuts in /usr/local/bin. Chef Workstation creates shortcuts here
+#     that point into /opt/chef-workstation or /opt/inspec. They are matched by where they
+#     point, not by name, so a dry run and a live run report the same items.
 for cli_link in /usr/local/bin/*(N@); do
   link_target="$(/usr/bin/readlink "$cli_link" 2>/dev/null)"
   if [[ "$link_target" == */opt/chef-workstation/* || "$link_target" == */opt/inspec/* ]]; then
@@ -340,7 +311,7 @@ for receipt in $(/usr/sbin/pkgutil --pkgs 2>/dev/null | /usr/bin/grep -iE "com\.
   fi
 done
 
-# 2h. Login window text set by Rippling (reset only if one is actually set)
+# 2h. Custom login-window text - cleared only if some is set.
 current_lw_text="$(/usr/bin/defaults read /Library/Preferences/com.apple.loginwindow LoginwindowText 2>/dev/null)"
 if [[ -n "$current_lw_text" ]]; then
   log_find "Login window text: '${current_lw_text}'"
@@ -355,17 +326,93 @@ if [[ -n "$current_lw_text" ]]; then
   fi
 fi
 
-# 2i. Local admin account - flag-gated (may be the only local admin on the device)
+# 2i. Rippling local admin account - only if REMOVE_RIPPLING_ADMIN="true".
+#     Safety checks run in both modes, so a dry run shows whether removal would be allowed.
+#     Removal is blocked if the account is signed in, if no other local admin exists, or if
+#     it is the only admin with a Secure Token (on a FileVault-encrypted Mac, that account
+#     may be the only one able to unlock the disk). The account is deleted with Apple's
+#     sysadminctl tool. Its home folder is read from the account record and removed only
+#     after the account is confirmed gone, and only if it still belongs to that account.
+account_blocked="false"
+integer account_failures=0   # account-related FAILED lines, so the summary can explain them
 if /usr/bin/dscl . -read "/Users/${USER_TO_REMOVE}" >/dev/null 2>&1; then
   if [[ "$REMOVE_RIPPLING_ADMIN" == "true" ]]; then
     log_find "Local account: ${USER_TO_REMOVE}"
-    if [[ "$DRY_RUN" == "false" ]]; then
-      /bin/rm -Rf "/Users/${USER_TO_REMOVE}"
-      /usr/bin/dscl . -delete "/Users/${USER_TO_REMOVE}"
-      if /usr/bin/dscl . -read "/Users/${USER_TO_REMOVE}" >/dev/null 2>&1; then
-        log_fail "Account: ${USER_TO_REMOVE}"
+    # Home folder path, read from the account record (handles spaces in the path).
+    acct_home="$(/usr/bin/dscl . -read "/Users/${USER_TO_REMOVE}" NFSHomeDirectory 2>/dev/null |
+      /usr/bin/sed -e 's/^NFSHomeDirectory://' | /usr/bin/tr -d '\n' |
+      /usr/bin/sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    acct_uid="$(/usr/bin/dscl . -read "/Users/${USER_TO_REMOVE}" UniqueID 2>/dev/null | /usr/bin/awk '{print $2}')"
+    block_reason=""
+
+    # Check 1: the account must not be signed in.
+    if /usr/bin/who | /usr/bin/awk '{print $1}' | /usr/bin/grep -qix "$USER_TO_REMOVE"; then
+      block_reason="account is currently logged in"
+    fi
+
+    # Check 2: at least one other local admin account must exist.
+    if [[ -z "$block_reason" ]]; then
+      other_admins=0
+      for u in ${(f)"$(/usr/bin/dscl . -list /Users UniqueID | /usr/bin/awk '$2 >= 500 {print $1}')"}; do
+        [[ "${u:l}" == "${USER_TO_REMOVE:l}" ]] && continue
+        /usr/sbin/dseditgroup -o checkmember -m "$u" admin 2>/dev/null | /usr/bin/grep -q "^yes" || continue
+        (( other_admins++ ))
+      done
+      if (( other_admins == 0 )); then
+        block_reason="no other local admin account exists on this Mac - create one first"
+      fi
+    fi
+
+    # Check 3: if this account has a Secure Token, another admin with one must exist.
+    if [[ -z "$block_reason" ]] && \
+       /usr/sbin/sysadminctl -secureTokenStatus "$USER_TO_REMOVE" 2>&1 | /usr/bin/grep -q "ENABLED"; then
+      other_token_admins=0
+      for u in ${(f)"$(/usr/bin/dscl . -list /Users UniqueID | /usr/bin/awk '$2 >= 500 {print $1}')"}; do
+        [[ "${u:l}" == "${USER_TO_REMOVE:l}" ]] && continue
+        /usr/sbin/sysadminctl -secureTokenStatus "$u" 2>&1 | /usr/bin/grep -q "ENABLED" || continue
+        /usr/sbin/dseditgroup -o checkmember -m "$u" admin 2>/dev/null | /usr/bin/grep -q "^yes" || continue
+        (( other_token_admins++ ))
+      done
+      if (( other_token_admins == 0 )); then
+        block_reason="it is the only admin with a Secure Token (FileVault unlock / volume owner) - create another admin with a Secure Token first"
       else
-        log_done "Account + home dir: ${USER_TO_REMOVE}"
+        log_info "Account '${USER_TO_REMOVE}' holds a Secure Token; ${other_token_admins} other Secure Token admin(s) present - safe to remove."
+      fi
+    fi
+
+    if [[ -n "$block_reason" ]]; then
+      account_blocked="true"
+      if [[ "$DRY_RUN" == "true" ]]; then
+        log_warn "Account '${USER_TO_REMOVE}' would be BLOCKED in a live run: ${block_reason}."
+      else
+        (( account_failures++ ))
+        log_fail "Account '${USER_TO_REMOVE}' NOT removed: ${block_reason}. Nothing was changed."
+      fi
+    elif [[ "$DRY_RUN" == "true" ]]; then
+      log_info "Account '${USER_TO_REMOVE}' passed preflight - a live run would remove it and its home dir (${acct_home:-unknown})."
+    else
+      del_output="$(/usr/sbin/sysadminctl -deleteUser "$USER_TO_REMOVE" 2>&1)"
+      if /usr/bin/dscl . -read "/Users/${USER_TO_REMOVE}" >/dev/null 2>&1; then
+        (( account_failures++ ))
+        log_fail "Account: ${USER_TO_REMOVE} (sysadminctl: ${del_output//$'\n'/ })"
+      else
+        # The account is gone. Remove its home folder only if sysadminctl left it behind,
+        # it is under /Users, and it is still owned by the deleted account, so a folder
+        # belonging to anyone else is never removed.
+        if [[ "$acct_home" == /Users/?* && "$acct_home" != "/Users/Shared" && -e "$acct_home" && -n "$acct_uid" ]]; then
+          home_owner="$(/usr/bin/stat -f '%u' "$acct_home" 2>/dev/null)"
+          if [[ "$home_owner" == "$acct_uid" ]]; then
+            /bin/rm -Rf "$acct_home"
+          else
+            log_warn "Home dir ${acct_home} not removed: owned by UID ${home_owner:-unknown}, not ${acct_uid}."
+          fi
+        fi
+        if [[ -n "$acct_home" && -e "$acct_home" ]]; then
+          (( account_failures++ ))
+          log_fail "Account removed but home dir still present: ${acct_home}"
+        else
+          log_done "Account + home dir: ${USER_TO_REMOVE}"
+        fi
       fi
     fi
   else
@@ -376,7 +423,7 @@ else
 fi
 
 ################################################################################################
-# PHASE 3 - SUMMARY (read the Iru console output bottom-up; this block is the verdict)
+# PHASE 3 - SUMMARY (read the output from the bottom up; this block is the result)
 ################################################################################################
 log_info "================================================================"
 log_info "SUMMARY"
@@ -394,7 +441,15 @@ if [[ ${#found_items[@]} -eq 0 ]]; then
 elif [[ "$DRY_RUN" == "true" ]]; then
   log_info "RESULT: DRY RUN complete. Review FOUND lines above; if they look right, set DRY_RUN=\"false\" and re-push."
 elif [[ ${#failed_items[@]} -gt 0 ]]; then
-  log_warn "RESULT: PARTIAL. ${#failed_items[@]} item(s) could not be removed - see FAILED lines. Re-run after a restart."
+  log_warn "RESULT: PARTIAL. ${#failed_items[@]} item(s) could not be removed - see FAILED lines."
+  if [[ "$account_blocked" == "true" ]]; then
+    log_warn "        Account NOT removed: fix the reason in its FAILED line first - a restart will not change it."
+  elif (( account_failures > 0 )); then
+    log_warn "        Account removal did not complete: see its FAILED line for the reason, then re-run."
+  fi
+  if (( ${#failed_items[@]} > account_failures )); then
+    log_warn "        Other items: restart the Mac and re-run this script."
+  fi
 else
   log_info "RESULT: CLEANED. ${#removed_items[@]} leftover(s) removed."
   if [[ "${removed_items[*]}" == *"Process killed"* ]]; then
