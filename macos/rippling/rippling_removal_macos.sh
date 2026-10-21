@@ -7,6 +7,27 @@
 #   Removes leftover Rippling components from Macs after they migrate to Iru.
 #   Deploy from Iru as a Custom Script. Runs as root.
 #
+#   Originally created by Matt Wilson (v1.x, 09/28/2021 - 08/19/2025).
+#   v2.0 rewrite by Dave Fonseca.
+#
+################################################################################################
+# CHANGELOG
+################################################################################################
+#
+#   v2.0.6 - Ground-up rewrite of v1.2.2.
+#            - Fixes the Rippling menu-bar icon persisting after cleanup: LaunchAgents are
+#              now unloaded from the signed-in user's session (gui/<uid>) instead of the
+#              system domain, and any still-running Rippling processes are stopped.
+#            - Adds DRY_RUN mode (default "true" = report only, changes nothing).
+#            - Adds timestamped logging (Iru console + unified log) and a SUMMARY block.
+#            - Verifies every removal and reports anything that survived.
+#            - Discovers Rippling, Munki, and Chef package receipts by pattern.
+#            - Fixes Chef symlink cleanup (v1.2.2 pattern never matched).
+#            - Rippling admin account removal is now opt-in (REMOVE_RIPPLING_ADMIN) and
+#              blocked if the account is signed in, is the last local admin, or is the
+#              only admin holding a Secure Token (protects FileVault unlock).
+#            - Reports, but never modifies, MDM enrollment and configuration profiles.
+#
 ################################################################################################
 # HOW TO RUN THIS SCRIPT
 ################################################################################################
@@ -27,6 +48,27 @@
 #
 #   NOT touched, on purpose: MDM enrollment and configuration profiles. They are
 #   reported only; your migration process handles them.
+#
+################################################################################################
+# License Information
+################################################################################################
+# Copyright 2026 Iru, Inc.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify, merge,
+# publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+# to whom the Software is furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all copies or
+# substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+# PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+# FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+# OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
 #
 ################################################################################################
 
